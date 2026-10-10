@@ -1,0 +1,49 @@
+{
+  "_note": "Mock CRM for the demo. Northwind Robotics and Ferrous Dynamics are fictional; all internal data about them is synthetic.",
+  "companies": [
+    {
+      "id": "crm-001",
+      "name": "Lattice",
+      "aliases": ["lattice hq", "lattice.com"],
+      "domain": "lattice.com",
+      "stage": "Prospect",
+      "owner": "vp_alice",
+      "description": "People-management software (performance, engagement, HRIS)",
+      "folder": null,
+      "last_interaction": null
+    },
+    {
+      "id": "crm-002",
+      "name": "Lattice Semiconductor",
+      "aliases": ["lscc"],
+      "domain": "latticesemi.com",
+      "stage": "Not tracked",
+      "owner": null,
+      "description": "Public FPGA chip maker (NASDAQ: LSCC)",
+      "folder": null,
+      "last_interaction": null
+    },
+    {
+      "id": "crm-003",
+      "name": "Northwind Robotics",
+      "aliases": ["northwind"],
+      "domain": "northwind-robotics.example",
+      "stage": "Deep dive",
+      "owner": "vp_alice",
+      "description": "Fictional company (synthetic demo data): autonomous picking robots for mid-size warehouses",
+      "folder": "northwind",
+      "last_interaction": "2026-09-22"
+    },
+    {
+      "id": "crm-004",
+      "name": "Ferrous Dynamics",
+      "aliases": ["ferrous"],
+      "domain": "ferrous-dynamics.example",
+      "stage": "Portfolio",
+      "owner": "vp_alice",
+      "description": "Fictional portfolio company (synthetic demo data): warehouse robotics",
+      "folder": "portco_x",
+      "last_interaction": "2026-09-30"
+    }
+  ]
+}

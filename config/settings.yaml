@@ -1,0 +1,79 @@
+# Runtime settings for the demo.
+
+# Which LLM provider to call. Both speak the Anthropic Messages API, so the code uses the
+# Anthropic SDK either way; only the endpoint, credentials, model ids and web tools differ.
+# Run `uv run diligence check-provider` after changing this.
+provider: openrouter            # openrouter | anthropic
+
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api       # SDK appends /v1/messages
+    api_key_env: OPENROUTER_API_KEY           # sent as a Bearer token
+    # Model tiering from the design doc; set every role to anthropic/claude-opus-5.5 for all-Opus.
+    models:
+      editor: anthropic/claude-opus-5.5       # summary + cross-section consistency pass
+      section: anthropic/claude-sonnet-5.5    # section drafting
+      web: anthropic/claude-sonnet-5.5        # quarantined web research
+      screen: anthropic/claude-haiku-4.5      # injection screen + fact extraction
+      qa: anthropic/claude-sonnet-5.5         # quick Q&A over an existing memo
+    # OpenRouter retries these models if the primary fails or declines (max 3).
+    fallback_models: [anthropic/claude-opus-5]
+    # Provider routing sent with every request. data_collection: deny keeps prompts out of
+    # any provider that trains on or retains data. Confirm ZDR terms with compliance.
+    routing: {data_collection: deny}
+    web_tools: openrouter                     # openrouter:web_search / openrouter:web_fetch
+    headers: {X-Title: Diligence agent demo}
+  anthropic:
+    base_url: null                            # api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    models:
+      editor: claude-opus-5-5
+      section: claude-sonnet-5-5
+      web: claude-sonnet-5-5
+      screen: claude-haiku-4-5
+      qa: claude-sonnet-5-5
+    fallback_models: []                       # uses Anthropic's server-side "default" fallbacks
+    routing: {}
+    web_tools: anthropic                      # web_search_20260209 / web_fetch_20260209
+    headers: {}
+
+# Effort per role (Haiku 4.5 does not take effort, so `screen` has none).
+effort:
+  editor: medium
+  section: medium
+  web: medium
+  qa: low                       # fast answers from the memo (target < 5s)
+
+# USD per million tokens, keyed by canonical model name. Only used when the provider does
+# not report cost itself (OpenRouter returns the actual cost in usage.cost).
+pricing:
+  claude-opus-5-5: {input: 4.00, output: 20.00, cache_read: 0.20}
+  claude-opus-5: {input: 5.00, output: 25.00, cache_read: 0.50}
+  claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_read: 0.20}
+  claude-haiku-4-5: {input: 1.00, output: 5.00, cache_read: 0.10}
+  web_search_per_1k: 10.00
+
+budgets:
+  run_token_cap: 1500000        # hard cap per run (input + output); new calls stop when hit
+  web_max_searches: 4           # per web question
+  web_max_fetches: 4
+
+web:
+  # Domains the web agent may never fetch from. Leave empty to allow all others.
+  blocked_domains: []
+  quote_max_chars: 300
+
+slack:
+  # strict = production: Slack members not mapped in users.yaml are refused.
+  # demo   = unmapped members run as default_user (convenience for a sandbox workspace).
+  # Channel audience checks never use the default: unmapped channel members are not cleared.
+  identity_mode: demo
+  default_user: vp_alice
+
+paths:
+  dataroom: data/dataroom
+  crm: config/crm.json
+  users: config/users.yaml
+  db: out/diligence.db
+  records: out/records         # hash-chained run records (books and records)
+  out: out

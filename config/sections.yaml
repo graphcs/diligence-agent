@@ -1,0 +1,67 @@
+# Section registry. Each section declares what it needs; stage templates are just lists
+# of sections. Sections with no dependencies run in parallel.
+sections:
+  snapshot:
+    title: Company snapshot
+    goal: >-
+      What the company does, for whom, founding year, HQ, headcount, funding to date and
+      latest round, and its current stage with the firm.
+    sources: [crm, docs, web]
+    depends_on: []
+    max_tokens: 16000
+    max_tool_calls: 16
+  team:
+    title: Team and founders
+    goal: >-
+      Founders and key executives: prior roles, relevant experience, tenure, notable hires
+      or departures. Flag key-person risk.
+    sources: [docs, web]
+    depends_on: []
+    max_tokens: 16000
+    max_tool_calls: 16
+  product:
+    title: Product and technology
+    goal: >-
+      What the product does, how it works, deployment model, differentiation claims and
+      any evidence for them (customers, benchmarks, patents).
+    sources: [docs, web]
+    depends_on: []
+    max_tokens: 16000
+    max_tool_calls: 16
+  competitors:
+    title: Competitive landscape
+    goal: >-
+      Direct and adjacent competitors, how the company positions against them, and where
+      it is weaker. Name competitors with one line each.
+    sources: [docs, web]
+    depends_on: []
+    max_tokens: 16000
+    max_tool_calls: 16
+  customers:
+    title: Customers and references
+    goal: >-
+      Named customers, concentration, what customers said in calls, churn or expansion
+      signals.
+    sources: [docs]
+    depends_on: []
+    max_tokens: 16000
+    max_tool_calls: 14
+    min_coverage: 0.95          # may not cite a partly read file
+  financials:
+    title: Traction and financials
+    goal: >-
+      ARR, growth, gross margin, burn, runway, using the firm's definitions. Every figure
+      must cite its source; flag figures that disagree between sources.
+    sources: [docs]
+    depends_on: [customers]
+    max_tokens: 16000
+    max_tool_calls: 14
+    min_coverage: 0.95          # may not cite a partly read file
+
+stages:
+  brief:
+    title: Pre-meeting brief
+    sections: [snapshot, team, product, competitors]
+  deep_dive:
+    title: Deep dive
+    sections: [snapshot, team, product, competitors, customers, financials]

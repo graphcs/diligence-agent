@@ -1,0 +1,19 @@
+# Simulated identity + access control. In production this comes from SSO and each
+# source system's own ACLs; here the MCP servers enforce it before returning any data.
+users:
+  vp_alice:
+    display_name: Alice (Investment VP)
+    slack_ids: []            # add your Slack member ID to map yourself to this user
+    deals: [crm-001, crm-002, crm-003]
+    folders: [northwind, portco_x]   # Alice sits on Ferrous Dynamics' board
+  analyst_bob:
+    display_name: Bob (Associate)
+    slack_ids: []
+    deals: [crm-001, crm-002, crm-003]   # on the Northwind deal team...
+    folders: []                          # ...but not granted the data room
+
+# Folder metadata. A folder tagged `portfolio` is confidential to its own company: the docs
+# server refuses it during diligence on any other deal, even for users who can open it.
+folders:
+  northwind: {deal: crm-003, confidentiality: deal}
+  portco_x: {deal: crm-004, confidentiality: portfolio}

@@ -1,0 +1,13 @@
+# Firm definitions injected into every prompt so terms mean one thing everywhere.
+# Owned by the data team; versioned with the code.
+version: 2026-10-08
+terms:
+  prospect: A company in the CRM at stage "Prospect" - actively evaluated, no term sheet issued.
+  deep dive: CRM stage "Deep dive" - data room access granted and diligence underway.
+  portfolio company: A company the firm has invested in (CRM stage "Portfolio"). Its internal data is confidential to its own deal team.
+  ARR: Annualised recurring revenue - current month's recurring revenue x 12. Excludes one-off services.
+  net revenue retention (NRR): Recurring revenue this month from customers who existed 12 months ago, divided by their revenue 12 months ago.
+  burn multiple: Net burn divided by net new ARR over the same period.
+  verified: A claim backed by an internal primary source (data room, CRM, call notes).
+  reported: A claim from the web or a third party, not independently checked.
+  inferred: The agent's own synthesis across sources; always labelled as such.
