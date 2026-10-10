@@ -19,6 +19,8 @@ A working prototype of the VC diligence agent design. You ask in Slack, or on th
 | **Books and records** | Every model call and human action goes to a hash-chained log per run; `diligence records verify <run>` detects tampering |
 | **Channel audience check** | Memo content goes to the thread only if every channel member is cleared for the deal; otherwise to the requester by DM |
 
+**Design doc:** [docs/DESIGN.md](docs/DESIGN.md) covers architecture, how each requirement in the brief is met, trade-offs, eval results, and the path to production.
+
 All internal data is **synthetic**. Northwind Robotics and Ferrous Dynamics are fictional. Lattice is researched from the public web only, and its CRM record is a mock.
 
 ## Setup
