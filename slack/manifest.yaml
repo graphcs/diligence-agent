@@ -1,0 +1,39 @@
+# Create the app at https://api.slack.com/apps -> "From an app manifest", paste this,
+# install to a SANDBOX workspace, then:
+#   SLACK_BOT_TOKEN = Bot User OAuth Token (xoxb-...)
+#   SLACK_APP_TOKEN = App-level token with connections:write (xapp-...)
+display_information:
+  name: Diligence (demo)
+  description: Drafts cited pre-meeting briefs. AI drafts, humans sign.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true            # lets people DM the bot
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: diligence
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - files:write
+      - channels:history
+      - groups:history
+      - im:history
+      - channels:read      # list channel members for the audience check
+      - groups:read        # ...also in private channels
+      - im:write           # DM the requester when a channel is too wide
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+  interactivity:
+    is_enabled: true
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false
