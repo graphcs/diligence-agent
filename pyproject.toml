@@ -1,0 +1,36 @@
+[project]
+name = "diligence"
+version = "0.1.0"
+description = "VC diligence agent - demo MVP (Slack + CLI, permission-aware MCP, cited briefs)"
+readme = "README.md"
+authors = [
+    { name = "John Maheswaran", email = "johnmahan7@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.14.4",
+    "anthropic>=1.12.1",
+    "mcp>=2.3.0",
+    "pydantic>=2.14.0",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "slack-bolt>=1.30.0",
+]
+
+[project.scripts]
+diligence = "diligence:main"
+diligence-slack = "diligence.slack_app:run"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
