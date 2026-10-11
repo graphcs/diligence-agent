@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -266,7 +267,7 @@ async def run_and_report(client, channel: str, thread: str, only: list[str] | No
                       blocks=summary_card(memo, card, thread), **({"thread_ts": to_thread} if to_thread else {}))
     card["ts"] = resp["ts"]
     put_thread(thread, card=card)
-    await upload_memo(client, to_channel, to_thread, memo, result.markdown)
+    await upload_memo(client, to_channel, to_thread, memo, result.memo_path)
     where = "summary below" if to_channel == channel else "sent to you privately"
     await finish(f":white_check_mark: {title} done in {result.seconds:.0f}s · ${result.cost_usd:.2f} · {where}")
 
@@ -292,12 +293,14 @@ async def refresh_card(client, thread: str, memo: MemoState) -> None:
         log.warning("could not refresh the summary card for thread %s", thread, exc_info=True)
 
 
-async def upload_memo(client, channel: str, thread: str | None, memo: MemoState, md: str) -> None:
+async def upload_memo(client, channel: str, thread: str | None, memo: MemoState, memo_md: Path) -> None:
+    """Post the memo as a Word document: the charts are embedded in it and Slack previews it."""
     final = review.signed_off_by(memo) is not None
     label = "signed off" if final else "AI draft"
     await client.files_upload_v2(
-        channel=channel, content=md, **({"thread_ts": thread} if thread else {}),
-        filename=f"{memo.company.replace(' ', '_')}_brief_v{memo.version}{'_FINAL' if final else ''}.md",
+        channel=channel, content=(memo_md.parent / "memo.docx").read_bytes(),
+        **({"thread_ts": thread} if thread else {}),
+        filename=f"{memo.company.replace(' ', '_')}_brief_v{memo.version}{'_FINAL' if final else ''}.docx",
         title=f"{memo.company} - brief v{memo.version} ({label})")
 
 
@@ -371,7 +374,7 @@ async def apply_review(client, body: dict[str, Any], action: str) -> None:
     except (AccessDenied, KeyError, ValueError) as e:
         await client.chat_postEphemeral(channel=channel, user=clicker, text=f"Not applied: {e}")
         return
-    _, md = orchestrator.save_memo(cfg, memo, st["user"])
+    memo_md, _ = orchestrator.save_memo(cfg, memo, st["user"])
     await client.chat_update(channel=channel, ts=body["message"]["ts"], text="Review & sign-off",
                              blocks=review_blocks(memo, v["thread"]))
     await refresh_card(client, v["thread"], memo)
@@ -380,7 +383,7 @@ async def apply_review(client, body: dict[str, Any], action: str) -> None:
         await post(client, channel=channel, text=f":white_check_mark: {memo.company} brief signed off "
                    f"by {review.signed_off_by(memo)}. Final memo attached.",
                    **({"thread_ts": thread} if thread else {}))
-        await upload_memo(client, channel, thread, memo, md)
+        await upload_memo(client, channel, thread, memo, memo_md)
 
 
 # ---- quick Q&A -----------------------------------------------------------------------------

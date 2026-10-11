@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import review
+from . import charts, review
 from .ledger import Ledger
-from .models import EvidenceRecord, MemoState
+from .models import Claim, EvidenceRecord, Figure, MemoState
 
 BANNER = "AI-generated draft - not reviewed. Verify every figure against its source before use."
 CONF_LABEL = {"verified": "Verified", "reported": "Reported", "inferred": "Inferred"}
@@ -22,8 +22,11 @@ class Citations:
 
     def __init__(self, ledger: Ledger, memo: MemoState):
         ids = [e for p in memo.summary for e in p.evidence_ids]
-        for s in memo.sections.values():
+        drawn = {c.section for c in charts.available(memo)}
+        for key, s in memo.sections.items():
             ids += [e for c in s.claims for e in c.evidence_ids]
+            if key in drawn:
+                ids += charts.evidence_ids(memo, key)
         ids += [e for p in memo.consistency_issues for e in p.evidence_ids]
         self.records: dict[str, EvidenceRecord] = ledger.get_evidence(sorted(set(ids)))
         self.order: dict[str, int] = {}      # evidence id -> citation number
@@ -103,26 +106,50 @@ def gaps(memo: MemoState) -> list[str]:
     return out
 
 
+DIAGRAM_DIR = "diagrams"
+
+
+def diagram_blocks(memo: MemoState, cites: Citations) -> dict[str, list[str]]:
+    """Image embeds for the charts drawn by charts.py, keyed by the section they belong to.
+    The PNGs are written next to memo.md (DIAGRAM_DIR) and posted with it in Slack."""
+    return {c.section: [f"![{c.title}]({DIAGRAM_DIR}/{c.filename})", "",
+                        f"_{c.caption} · sources {cites.refs(charts.evidence_ids(memo, c.section))}_"]
+            for c in charts.available(memo)}
+
+
+def stage_title(memo: MemoState) -> str:
+    return "Pre-meeting brief" if memo.stage == "brief" else memo.stage.replace("_", " ").title()
+
+
+def claim_tag(c: Claim) -> str:
+    """Why a claim can't be taken at face value, or '' when it can."""
+    if c.support == "unsupported":
+        return f"unverified: citation doesn't support this - {c.support_note}"
+    if c.support == "partial":
+        return f"partly supported: {c.support_note}"
+    return "unverified" if c.unverified else ""
+
+
+def figure_who(f: Figure) -> str:
+    return f" - {f.status} by {f.by}" + (f": {f.note}" if f.note else "") if f.by else ""
+
+
 def to_markdown(ledger: Ledger, memo: MemoState) -> str:
     cites = Citations(ledger, memo)
-    stage = "Pre-meeting brief" if memo.stage == "brief" else memo.stage.replace("_", " ").title()
-    md = [f"# {stage}: {memo.company}", "", f"> **{banner(memo)}**  ",
+    md = [f"# {stage_title(memo)}: {memo.company}", "", f"> **{banner(memo)}**  ",
           f"> Requested by {memo.requested_by} · version {memo.version} · CRM {memo.deal_id}", ""]
     if memo.summary:
         md += ["## Summary", ""] + [f"- {p.text} {cites.refs(p.evidence_ids)}" for p in memo.summary] + [""]
-    g = gaps(memo)
-    md += ["## Gaps and unverified", ""] + ([f"- {x}" for x in g] or ["- None reported."]) + [""]
-    for s in memo.sections.values():
+    diagrams = diagram_blocks(memo, cites)
+    for key, s in memo.sections.items():
         md += [f"## {s.title}", ""]
         if not s.claims:
             md.append("_No supported findings._")
         for c in s.claims:
-            tag = " *(unverified)*" if c.unverified else ""
-            if c.support == "unsupported":
-                tag = f" *(unverified: citation doesn't support this - {c.support_note})*"
-            elif c.support == "partial":
-                tag = f" *(partly supported: {c.support_note})*"
+            tag = f" *({claim_tag(c)})*" if claim_tag(c) else ""
             md.append(f"- {c.text} {cites.refs(c.evidence_ids)}{tag}")
+        if key in diagrams:
+            md += [""] + diagrams[key]
         md += ["", f"<sub>Drafted {s.generated_at} · run {s.run_id}</sub>", ""]
     if memo.figures:
         md += ["## Figures to verify", "",
@@ -130,12 +157,13 @@ def to_markdown(ledger: Ledger, memo: MemoState) -> str:
                "before this memo can be signed off.", ""]
         for f in memo.figures:
             mark = {"pending": "[ ]", "verified": "[x]", "disputed": "[!]"}[f.status]
-            who = f" - {f.status} by {f.by}" + (f": {f.note}" if f.note else "") if f.by else ""
-            md.append(f"- {mark} `{f.id}` {f.text} {cites.refs(f.evidence_ids)}{who}")
+            md.append(f"- {mark} `{f.id}` {f.text} {cites.refs(f.evidence_ids)}{figure_who(f)}")
         md.append("")
     if memo.consistency_issues:
         md += ["## Consistency checks", ""]
         md += [f"- {p.text} {cites.refs(p.evidence_ids)}" for p in memo.consistency_issues] + [""]
+    g = gaps(memo)
+    md += ["## Gaps and unverified", ""] + ([f"- {x}" for x in g] or ["- None reported."]) + [""]
     md += ["## Sources", ""]
     for n, r in cites.sources():
         where = f", p. {r.page}" if r.page else ""

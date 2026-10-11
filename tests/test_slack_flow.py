@@ -101,7 +101,7 @@ async def test_full_run_posts_summary_with_review_button_and_file(slack):
     assert "AI draft, not yet reviewed · 0/4 sections reviewed" in summary["blocks"][1]["elements"][0]["text"]
     assert summary["blocks"][-1]["elements"][0]["action_id"] == "review_open"
     (upload,) = slack.named("upload")
-    assert upload["filename"] == "Northwind_Robotics_brief_v1.md" and "## Sources" in upload["content"]
+    assert upload["filename"] == "Northwind_Robotics_brief_v1.docx" and upload["content"].startswith(b"PK")
 
 
 async def test_thread_state_survives_restart_and_reruns_one_section(slack):
@@ -110,7 +110,7 @@ async def test_thread_state_survives_restart_and_reruns_one_section(slack):
     # "Restart": nothing in memory; state comes back from SQLite.
     assert slack_app.get_thread("100.4")["crm_id"] == "crm-003"
     await slack_app.run_and_report(slack, "C1", "100.4", only=["competitors"])
-    assert slack.named("upload")[1]["filename"] == "Northwind_Robotics_brief_v2.md"
+    assert slack.named("upload")[1]["filename"] == "Northwind_Robotics_brief_v2.docx"
 
 
 async def test_access_denied_is_reported_in_thread(slack):
@@ -163,7 +163,7 @@ async def test_review_and_sign_off_through_buttons(slack, cfg):
     assert "Signed off by vp_alice" in card_updates[-1]["blocks"][1]["elements"][0]["text"]
     assert card_updates[-1]["blocks"][-1]["elements"][0]["text"]["text"] == "Open review"
     assert any("signed off" in p.get("text", "") for p in slack.named("post"))
-    assert slack.named("upload")[-1]["filename"].endswith("_FINAL.md")
+    assert slack.named("upload")[-1]["filename"].endswith("_FINAL.docx")
 
 
 async def test_bob_cannot_review_a_data_room_memo(slack, cfg):

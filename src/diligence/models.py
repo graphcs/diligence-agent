@@ -92,6 +92,58 @@ class Figure(BaseModel):
     note: str = ""
 
 
+class QuadrantPoint(BaseModel):
+    name: str
+    x: float          # 0-1 along the x axis
+    y: float          # 0-1 along the y axis
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Quadrant(BaseModel):
+    """Competitive positioning. Positions are inferred by the editor from cited claims."""
+    x_low: str = ""
+    x_high: str = ""
+    y_low: str = ""
+    y_high: str = ""
+    points: list[QuadrantPoint] = Field(default_factory=list)
+
+
+class RevenuePoint(BaseModel):
+    period: str
+    value: float
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class RevenueTrend(BaseModel):
+    metric: str = "ARR"
+    unit: str = ""
+    points: list[RevenuePoint] = Field(default_factory=list)
+
+
+class ModelEdge(BaseModel):
+    """One flow in the business model map, e.g. Customers -> Company 'subscription'."""
+    source: str
+    target: str
+    label: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class FundingRound(BaseModel):
+    date: str
+    round: str
+    amount: str = ""
+    lead: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Diagrams(BaseModel):
+    """Structured data behind the memo's business diagrams; every item cites evidence."""
+    quadrant: Quadrant = Field(default_factory=Quadrant)
+    revenue: RevenueTrend = Field(default_factory=RevenueTrend)
+    business_model: list[ModelEdge] = Field(default_factory=list)
+    funding: list[FundingRound] = Field(default_factory=list)
+
+
 class MemoState(BaseModel):
     deal_id: str
     company: str
@@ -105,3 +157,4 @@ class MemoState(BaseModel):
     changelog: list[str] = Field(default_factory=list)
     reviews: dict[str, SectionReview] = Field(default_factory=dict)
     figures: list[Figure] = Field(default_factory=list)
+    diagrams: Diagrams = Field(default_factory=Diagrams)

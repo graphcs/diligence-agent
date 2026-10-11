@@ -16,7 +16,7 @@ from typing import Any, Awaitable, Callable
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from . import render, review
+from . import charts, render, review, word
 from .agents import editor
 from .agents.section_agent import SectionContext, SectionExecutor
 from .config import Config, load_config
@@ -89,7 +89,25 @@ def save_memo(cfg: Config, memo: MemoState, user: str, run_id: str | None = None
     out_md.write_text(md)
     if run_id:
         (path.parent / f"memo_{run_id}.md").write_text(md)
+    chart_dir = path.parent / render.DIAGRAM_DIR
+    if run_id or not chart_dir.exists():
+        write_charts(chart_dir, memo)  # review actions don't change them
+    # The Word document (charts embedded) is the shareable one; re-rendered so its banner and
+    # review status always match.
+    images = {p.name: p.read_bytes() for p in chart_dir.glob("*.png")}
+    (path.parent / "memo.docx").write_bytes(word.to_docx(Ledger(cfg.path("db")), memo, images))
     return out_md, md
+
+
+def write_charts(folder: Path, memo: MemoState) -> None:
+    """Draw the memo's charts next to memo.md, removing ones that no longer apply."""
+    folder.mkdir(parents=True, exist_ok=True)
+    pngs = charts.render_all(memo)
+    for old in folder.glob("*.png"):
+        if old.name not in pngs:
+            old.unlink()
+    for name, data in pngs.items():
+        (folder / name).write_bytes(data)
 
 
 def load_memo(cfg: Config, deal_id: str, user: str) -> MemoState | None:
