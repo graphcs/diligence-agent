@@ -55,6 +55,10 @@ class Answer:
                          + f" ({r.confidence})" for n, r in self.sources)
         return f"{self.text}\n\n{refs}"
 
+    def source_lines(self) -> list[str]:
+        return [f"[{n}] {r.title}" + (f", p. {r.page}" if r.page else "") + f" · {r.confidence}"
+                for n, r in self.sources]
+
 
 async def answer(cfg: Config, *, user: str, crm_id: str, question: str) -> Answer:
     t0 = time.monotonic()

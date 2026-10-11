@@ -35,7 +35,7 @@ from .models import MemoState
 log = logging.getLogger("diligence.slack")
 cfg = load_config()
 BOT_ID: dict[str, str] = {}
-MAX_FIGURE_ROWS = 20
+MAX_FIGURE_ROWS = 15  # Slack allows 50 blocks per message
 
 MENTION_RE = re.compile(r"<@[A-Z0-9]+>")
 ASK_RE = re.compile(r"(?:diligence|brief|research|prep|look into)\s+(?:for|on|into)?\s*(.+)", re.I)
@@ -164,61 +164,132 @@ async def blocked_members(client, channel: str, requester_slack: str, memo: Memo
     return blocked
 
 
-async def delivery(client, channel: str, thread: str, st: dict[str, Any], memo: MemoState) -> tuple[str, str | None]:
+async def delivery(client, channel: str, thread: str, st: dict[str, Any], memo: MemoState,
+                   notice: bool = True) -> tuple[str, str | None]:
     """Where to post memo content: the thread, or the requester's DM if the channel is wider
     than the people cleared for this deal."""
     blocked = await blocked_members(client, channel, st["slack_user"], memo)
     if not blocked:
         return channel, thread
     dm = (await client.conversations_open(users=st["slack_user"]))["channel"]["id"]
-    await post(client, channel=channel, thread_ts=thread,
-               text=f":lock: Sent to <@{st['slack_user']}> privately: {len(blocked)} member(s) of this "
-                    "channel are not cleared for this deal's sources.")
+    if notice:
+        await post(client, channel=channel, thread_ts=thread,
+                   text=f":lock: Sent to <@{st['slack_user']}> privately: {len(blocked)} member(s) of this "
+                        "channel are not cleared for this deal's sources.")
     return dm, None
 
 
 # ---- runs --------------------------------------------------------------------------------
 
+PROGRESS_ICON = {"queued": ":white_circle:", "running": ":hourglass_flowing_sand:", "done": ":white_check_mark:"}
+
+
+def progress_blocks(company: str, title: str, keys: list[str], status: dict[str, str], step: str,
+                    elapsed: float) -> list[dict[str, Any]]:
+    done = sum(v == "done" for v in status.values())
+    rows = "\n".join(f"{PROGRESS_ICON[status[k]]} {cfg.sections[k]['title']}" for k in keys)
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f":gear: *{title}: {company}*\n{step}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": rows}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text":
+            f"`{render.progress_bar(done, len(keys))}` {done}/{len(keys)} sections · {elapsed:.0f}s elapsed · "
+            "usually 1–2 min · I'll post here when it's ready"}]},
+    ]
+
+
 async def rerun(client, channel: str, thread: str, key: str) -> None:
-    await post(client, channel=channel, thread_ts=thread,
-               text=f"Refreshing *{cfg.sections[key]['title']}* only…")
     asyncio.create_task(run_and_report(client, channel, thread, only=[key]))
 
 
 async def run_and_report(client, channel: str, thread: str, only: list[str] | None = None) -> None:
     st = get_thread(thread)
-    status: dict[str, str] = {}
-    msg = await post(client, channel=channel, thread_ts=thread, text="Planning…")
+    company = next(c["name"] for c in cfg.crm if c["id"] == st["crm_id"])
+    title = (f"Refreshing {cfg.sections[only[0]]['title']}" if only and len(only) == 1
+             else cfg.stages[st["stage"]]["title"])
+    keys = [k for level in orchestrator.plan(cfg, st["stage"], only) for k in level]
+    status = {k: "queued" for k in keys}
+    view = {"step": "Planning…"}
     t0 = time.monotonic()
+    lock = asyncio.Lock()
+
+    async def draw() -> None:
+        async with lock:
+            await client.chat_update(channel=channel, ts=msg["ts"], text=f"{title}: {company}…",
+                                     blocks=progress_blocks(company, title, keys, status, view["step"],
+                                                            time.monotonic() - t0))
+
+    async def finish(text: str) -> None:
+        async with lock:
+            await client.chat_update(channel=channel, ts=msg["ts"], text=text,
+                                     blocks=[{"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}])
 
     async def progress(event: str, section: str | None) -> None:
-        if event in ("start", "done") and section:
-            status[section] = "✓" if event == "done" else "…"
-        lines = " · ".join(f"{s} {cfg.sections[k]['title']}" for k, s in status.items())
-        if event == "editor":
-            lines += " · editor pass…"
-        await client.chat_update(channel=channel, ts=msg["ts"],
-                                 text=f"{lines or 'Planning…'}  ({time.monotonic() - t0:.0f}s)")
+        if event in ("start", "done") and section in status:
+            status[section] = "done" if event == "done" else "running"
+        running = sum(v == "running" for v in status.values())
+        view["step"] = ("Editor pass: summary and consistency check…" if event == "editor"
+                        else f"Researching {running} section(s) in parallel…" if running
+                        else view["step"])
+        await draw()
 
+    async def tick() -> None:
+        while True:
+            await asyncio.sleep(5)
+            await draw()
+
+    msg = await post(client, channel=channel, thread_ts=thread, text=f"{title}: {company}…",
+                     blocks=progress_blocks(company, title, keys, status, view["step"], 0))
+    ticker = asyncio.create_task(tick())
     try:
         result = await orchestrator.run(user=st["user"], crm_id=st["crm_id"], stage=st["stage"],
                                         only=only, progress=progress, cfg=cfg)
+        view["step"] = "Checking who in this channel can see the sources…"
+        await draw()
+        memo = result.memo
+        to_channel, to_thread = await delivery(client, channel, thread, st, memo)
+        view["step"] = "Posting the summary and memo…"
+        await draw()
     except AccessDenied as e:
-        await client.chat_update(channel=channel, ts=msg["ts"], text=f"Access denied: {e}")
+        ticker.cancel()
+        await finish(f":lock: Access denied: {e}")
         return
     except Exception as e:  # surface failures in the thread rather than going silent
+        ticker.cancel()
         log.exception("run failed")
-        await client.chat_update(channel=channel, ts=msg["ts"], text=f"Run failed: {e}")
+        await finish(f":x: Run failed: {e}")
         return
+    finally:
+        ticker.cancel()
 
-    memo = result.memo
-    to_channel, to_thread = await delivery(client, channel, thread, st, memo)
-    blocks = render.slack_summary(ledger(), memo, result.cost_usd, result.seconds)
-    blocks.append({"type": "actions", "elements": [
-        button("Review & sign off", "review_open", {"thread": thread}, "primary")]})
-    await post(client, channel=to_channel, text=f"Brief: {memo.company}", blocks=blocks,
-               **({"thread_ts": to_thread} if to_thread else {}))
+    card = {"channel": to_channel, "cost": result.cost_usd, "seconds": result.seconds}
+    resp = await post(client, channel=to_channel, text=f"Brief: {memo.company}",
+                      blocks=summary_card(memo, card, thread), **({"thread_ts": to_thread} if to_thread else {}))
+    card["ts"] = resp["ts"]
+    put_thread(thread, card=card)
     await upload_memo(client, to_channel, to_thread, memo, result.markdown)
+    where = "summary below" if to_channel == channel else "sent to you privately"
+    await finish(f":white_check_mark: {title} done in {result.seconds:.0f}s · ${result.cost_usd:.2f} · {where}")
+
+
+def summary_card(memo: MemoState, card: dict[str, Any], thread: str) -> list[dict[str, Any]]:
+    blocks = render.slack_summary(ledger(), memo, card.get("cost", 0.0), card.get("seconds", 0.0))
+    signed = review.signed_off_by(memo) is not None
+    blocks.append({"type": "actions", "elements": [
+        button("Open review" if signed else "Review & sign off", "review_open", {"thread": thread},
+               None if signed else "primary")]})
+    return blocks
+
+
+async def refresh_card(client, thread: str, memo: MemoState) -> None:
+    """Re-render the summary card in place so its status matches the review state."""
+    card = (get_thread(thread) or {}).get("card")
+    if not card or "ts" not in card:
+        return
+    try:
+        await client.chat_update(channel=card["channel"], ts=card["ts"], text=f"Brief: {memo.company}",
+                                 blocks=summary_card(memo, card, thread))
+    except Exception:  # an old or deleted card must never block a review action
+        log.warning("could not refresh the summary card for thread %s", thread, exc_info=True)
 
 
 async def upload_memo(client, channel: str, thread: str | None, memo: MemoState, md: str) -> None:
@@ -232,30 +303,41 @@ async def upload_memo(client, channel: str, thread: str | None, memo: MemoState,
 
 # ---- review & sign-off ---------------------------------------------------------------------
 
+FIGURE_ICON = {"pending": ":white_circle:", "verified": ":white_check_mark:", "disputed": ":exclamation:"}
+
+
 def review_blocks(memo: MemoState, thread: str) -> list[dict[str, Any]]:
     st = review.status(memo)
-    head = (f":white_check_mark: *Signed off by {review.signed_off_by(memo)}*" if st.signed_off
-            else f"*Review & sign-off* - {st.line()}\nAI drafts, humans sign: mark each section "
-                 "reviewed and check each financial figure against its source.")
-    blocks: list[dict[str, Any]] = [{"type": "section", "text": {"type": "mrkdwn", "text": head}}]
-    rows = []
+    state = render.review_state(memo)
+    done = st.sections_reviewed + st.figures_verified
+    total = st.sections_total + st.figures_total
+    head = (f":white_check_mark: *Signed off by {review.signed_off_by(memo)}*" if state == "signed_off"
+            else "AI drafts, humans sign: mark each section reviewed and check each financial "
+                 "figure against its source.")
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"📋 Review & sign-off · {memo.company}"[:150]}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": head}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text":
+            f"`{render.progress_bar(done, total)}` {render.status_line(memo)}"}]},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*Sections*"}},
+    ]
     for key, s in memo.sections.items():
         r = memo.reviews.get(key)
-        rows.append(f"{'✅' if r else '⬜'} *{s.title}*" + (f" - {r.by}" if r else ""))
-    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(rows)}})
-    pending_sections = [k for k in memo.sections if k not in memo.reviews]
-    if pending_sections:
-        blocks.append({"type": "actions", "elements": [
-            button(f"✓ {cfg.sections[k]['title']}", f"rev_sec__{k}", {"thread": thread, "section": k})
-            for k in pending_sections[:25]]})
+        block = {"type": "section", "text": {"type": "mrkdwn", "text":
+                 f":white_check_mark: {s.title}  _reviewed by {r.by}_" if r else f":white_circle: {s.title}"}}
+        if not r:
+            block["accessory"] = button("Mark reviewed", f"rev_sec__{key}", {"thread": thread, "section": key})
+        blocks.append(block)
     if memo.figures:
-        blocks.append({"type": "divider"})
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Financial figures*"}})
-    for f in memo.figures[:MAX_FIGURE_ROWS]:
-        icon = {"pending": "⬜", "verified": "✅", "disputed": "❗"}[f.status]
-        who = f" - {f.status} by {f.by}" if f.by else ""
-        blocks.append({"type": "section", "text": {"type": "mrkdwn",
-                                                   "text": f"{icon} `{f.id}` {f.text[:250]}{who}"}})
+        blocks += [{"type": "divider"},
+                   {"type": "section", "text": {"type": "mrkdwn", "text":
+                    "*Financial figures*: check each against its source"}}]
+    shown = memo.figures[:MAX_FIGURE_ROWS]
+    for f in shown:
+        who = f"\n_{f.status} by {f.by}_" if f.by else ""
+        where = memo.sections[f.section].title if f.section in memo.sections else f.section
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
+                       f"{FIGURE_ICON[f.status]} *{where}*\n>{f.text[:250]}{who}"}})
         if f.status == "pending":
             blocks.append({"type": "actions", "elements": [
                 button("Verified", f"fig_ok__{f.id}", {"thread": thread, "figure": f.id}, "primary"),
@@ -292,6 +374,7 @@ async def apply_review(client, body: dict[str, Any], action: str) -> None:
     _, md = orchestrator.save_memo(cfg, memo, st["user"])
     await client.chat_update(channel=channel, ts=body["message"]["ts"], text="Review & sign-off",
                              blocks=review_blocks(memo, v["thread"]))
+    await refresh_card(client, v["thread"], memo)
     if not was_signed and review.signed_off_by(memo):
         thread = body["message"].get("thread_ts")
         await post(client, channel=channel, text=f":white_check_mark: {memo.company} brief signed off "
@@ -304,33 +387,48 @@ async def apply_review(client, body: dict[str, Any], action: str) -> None:
 
 async def answer_question(client, channel: str, thread: str, question: str) -> None:
     st = get_thread(thread)
+    company = next(c["name"] for c in cfg.crm if c["id"] == st["crm_id"])
     t0 = time.monotonic()
+    holder = await post(client, channel=channel, thread_ts=thread,
+                        text=f":mag: Looking that up in the *{company}* brief…")
+
+    async def show(text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        await client.chat_update(channel=channel, ts=holder["ts"], text=text, blocks=blocks or [])
+
     try:
         a = await qa.answer(cfg, user=st["user"], crm_id=st["crm_id"], question=question)
     except AccessDenied as e:
-        await post(client, channel=channel, thread_ts=thread, text=f"Access denied: {e}")
+        await show(f":lock: Access denied: {e}")
+        return
+    except Exception as e:
+        log.exception("question failed")
+        await show(f":x: Couldn't answer that: {e}")
         return
     if not a.has_memo:
-        company = next(c["name"] for c in cfg.crm if c["id"] == st["crm_id"])
-        await post(client, channel=channel, thread_ts=thread, text="No brief yet",
-                   blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                            "text": f"There's no brief for *{company}* yet, so I can't answer from it."}},
-                           *stage_blocks(company, st["crm_id"], thread)[1:]])
+        await show("No brief yet", [{"type": "section", "text": {"type": "mrkdwn",
+                   "text": f":page_facing_up: There's no brief for *{company}* yet, so I can't answer from it."}},
+                                    *stage_blocks(company, st["crm_id"], thread)[1:]])
         return
     memo = orchestrator.load_memo(cfg, st["crm_id"], st["user"])
-    to_channel, to_thread = await delivery(client, channel, thread, st, memo)
-    blocks: list[dict[str, Any]] = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": a.markdown()[:2900]}},
-        {"type": "context", "elements": [{"type": "mrkdwn", "text":
-            f"{time.monotonic() - t0:.1f}s · from brief v{memo.version} · "
-            + ("cited" if a.confident else "not covered by the brief")}]},
-    ]
+    to_channel, _ = await delivery(client, channel, thread, st, memo, notice=False)
+    meta = (f":stopwatch: {time.monotonic() - t0:.1f}s · from brief v{memo.version} · "
+            + (":white_check_mark: cited" if a.confident else ":grey_question: not covered by the brief"))
+    blocks: list[dict[str, Any]] = [{"type": "section", "text": {"type": "mrkdwn", "text": a.text[:2900]}}]
+    if a.sources:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "\n".join(
+            f"{render.CONF_ICON.get(r.confidence, ':white_circle:')} {line}"
+            for (_, r), line in zip(a.sources, a.source_lines()))[:2900]}]})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": meta}]})
     if not a.confident and a.suggest_section:
         blocks.append({"type": "actions", "elements": [button(
             f"Refresh {cfg.sections[a.suggest_section]['title']}", "refresh_sec",
             {"thread": thread, "section": a.suggest_section})]})
-    await post(client, channel=to_channel, text=a.text[:200], blocks=blocks,
-               **({"thread_ts": to_thread} if to_thread else {}))
+    if to_channel == channel:
+        await show(a.text[:200], blocks)
+        return
+    await show(f":lock: Answer sent to <@{st['slack_user']}> privately: this channel includes "
+               "people not cleared for this deal's sources.")
+    await post(client, channel=to_channel, text=a.text[:200], blocks=blocks)
 
 
 # ---- request routing -----------------------------------------------------------------------
@@ -399,7 +497,7 @@ def register(app: AsyncApp) -> None:
         await ack()
         v = json.loads(body["actions"][0]["value"])
         await client.chat_update(channel=body["channel"]["id"], ts=body["message"]["ts"],
-                                 text=f"Got it: *{v['name']}*.", blocks=[])
+                                 text=f":white_check_mark: *{v['name']}*", blocks=[])
         await post(client, channel=body["channel"]["id"], thread_ts=v["thread"],
                    text="Choose depth", blocks=stage_blocks(v["name"], v["crm_id"], v["thread"]))
 
@@ -414,7 +512,7 @@ def register(app: AsyncApp) -> None:
                                             text="Your Slack account isn't mapped to a firm identity.")
             return
         await client.chat_update(channel=channel, ts=body["message"]["ts"], blocks=[],
-                                 text=f"Starting the {cfg.stages[v['stage']]['title'].lower()}…")
+                                 text=f":white_check_mark: {cfg.stages[v['stage']]['title']} - starting…")
         put_thread(v["thread"], crm_id=v["crm_id"], user=user, stage=v["stage"],
                    slack_user=body["user"]["id"], channel=channel)
         asyncio.create_task(run_and_report(client, channel, v["thread"]))
@@ -428,8 +526,16 @@ def register(app: AsyncApp) -> None:
         if memo is None:
             return
         thread = body["message"].get("thread_ts")
-        await post(client, channel=body["channel"]["id"], text="Review & sign-off",
-                   blocks=review_blocks(memo, v["thread"]), **({"thread_ts": thread} if thread else {}))
+        channel = body["channel"]["id"]
+        if old := st.get("panel"):  # keep one live panel: point the old one at the new one
+            try:
+                await client.chat_update(channel=old["channel"], ts=old["ts"], blocks=[],
+                                         text=":arrow_down: This review panel moved further down the thread.")
+            except Exception:
+                log.warning("could not retire the old review panel", exc_info=True)
+        resp = await post(client, channel=channel, text="Review & sign-off",
+                          blocks=review_blocks(memo, v["thread"]), **({"thread_ts": thread} if thread else {}))
+        put_thread(v["thread"], panel={"channel": channel, "ts": resp["ts"]})
 
     @app.action(re.compile(r"^rev_sec__"))
     async def on_review_section(ack, body, client) -> None:

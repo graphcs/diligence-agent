@@ -10,6 +10,10 @@ from .models import EvidenceRecord, MemoState
 
 BANNER = "AI-generated draft - not reviewed. Verify every figure against its source before use."
 CONF_LABEL = {"verified": "Verified", "reported": "Reported", "inferred": "Inferred"}
+CONF_ICON = {"verified": ":large_green_circle:", "reported": ":large_yellow_circle:", "inferred": ":white_circle:"}
+STATE_ICON = {"draft": ":warning:", "in_review": ":hourglass_flowing_sand:", "signed_off": ":white_check_mark:"}
+SECTION_ICON = {"complete": ":white_check_mark:", "partial": ":large_orange_circle:", "failed": ":red_circle:"}
+STAGE_LABEL = {"brief": "Pre-meeting brief", "deep_dive": "Deep dive"}
 
 
 class Citations:
@@ -43,11 +47,35 @@ class Citations:
         return [(n, self.records[e]) for n, e in sorted(self.first.items())]
 
 
-def banner(memo: MemoState) -> str:
+def review_state(memo: MemoState) -> str:
+    """'draft' (no human action yet), 'in_review' or 'signed_off'."""
     st = review.status(memo)
-    if who := review.signed_off_by(memo):
-        return f"Reviewed and signed off by {who} ({st.line()})."
-    return f"{BANNER} Review status: {st.line()}."
+    if st.signed_off:
+        return "signed_off"
+    touched = st.sections_reviewed or st.figures_verified or st.figures_disputed
+    return "in_review" if touched else "draft"
+
+
+def status_line(memo: MemoState) -> str:
+    """Review state in one line, e.g. 'In review · 2/4 sections reviewed · 3/6 figures verified'."""
+    st = review.status(memo)
+    state = review_state(memo)
+    if state == "signed_off":
+        return f"Signed off by {review.signed_off_by(memo)} · {st.line()}"
+    return f"{'In review' if state == 'in_review' else 'AI draft, not yet reviewed'} · {st.line()}"
+
+
+def banner(memo: MemoState) -> str:
+    if review_state(memo) == "signed_off":
+        return f"Reviewed and signed off by {review.signed_off_by(memo)} ({review.status(memo).line()})."
+    if review_state(memo) == "in_review":
+        return f"AI-generated draft - review in progress. Review status: {review.status(memo).line()}."
+    return f"{BANNER} Review status: {review.status(memo).line()}."
+
+
+def progress_bar(done: int, total: int, width: int = 10) -> str:
+    filled = round(width * done / total) if total else 0
+    return "▰" * filled + "▱" * (width - filled)
 
 
 def gaps(memo: MemoState) -> list[str]:
@@ -120,20 +148,46 @@ def to_markdown(ledger: Ledger, memo: MemoState) -> str:
 
 
 def slack_summary(ledger: Ledger, memo: MemoState, cost_usd: float, seconds: float) -> list[dict[str, Any]]:
+    """The summary card. Re-rendered in place after every review action, so its status line
+    always matches the memo's review state."""
     cites = Citations(ledger, memo)
+    st = review.status(memo)
+    state = review_state(memo)
     bullets = "\n".join(f"• {p.text} {cites.refs(p.evidence_ids)}" for p in memo.summary) \
-        or "_No summary - see sections._"
+        or "_No summary - see the sections in the memo file._"
+    sections = []
+    for key, s in memo.sections.items():
+        r = memo.reviews.get(key)
+        tail = f"  _reviewed by {r.by}_" if r else ""
+        partial = "" if s.status == "complete" else f" _({s.status})_"
+        sections.append(f"{SECTION_ICON.get(s.status, ':white_circle:')} {s.title}{partial}{tail}")
     g = gaps(memo)
-    gap_text = "\n".join(f"• {x}" for x in g[:8]) + (f"\n…and {len(g) - 8} more" if len(g) > 8 else "")
-    sources = "\n".join(f"[{n}] {r.title} ({CONF_LABEL[r.confidence]})" for n, r in cites.sources()[:10])
+    gap_text = "\n".join(f"• {x}" for x in g[:5]) + (f"\n_+{len(g) - 5} more in the memo file_" if len(g) > 5 else "")
+    srcs = cites.sources()
+    sources = "\n".join(f"{CONF_ICON[r.confidence]} [{n}] {r.title}" + (f", p. {r.page}" if r.page else "")
+                        for n, r in srcs[:6])
+    if len(srcs) > 6:
+        sources += f"\n_+{len(srcs) - 6} more in the memo file_"
+    figures = f"{st.figures_verified}/{st.figures_total} verified" if st.figures_total else "none"
+    stage = STAGE_LABEL.get(memo.stage, memo.stage.replace("_", " ").title())
     return [
-        {"type": "header", "text": {"type": "plain_text", "text": f"Brief: {memo.company}"[:150]}},
-        {"type": "context", "elements": [{"type": "mrkdwn", "text":
-            (":white_check_mark: " if review.signed_off_by(memo) else ":warning: ") + banner(memo)}]},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Summary*\n{bullets}"[:2900]}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Gaps and unverified*\n{gap_text or '• None reported.'}"[:2900]}},
+        {"type": "header", "text": {"type": "plain_text", "text": f"📄 {stage} · {memo.company}"[:150]}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"{STATE_ICON[state]} *{status_line(memo)}*"}]},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*Sections reviewed*\n{progress_bar(st.sections_reviewed, st.sections_total, 8)} "
+                                       f"{st.sections_reviewed}/{st.sections_total}"},
+            {"type": "mrkdwn", "text": f"*Financial figures*\n{figures}"
+                                       + (f" · {st.figures_disputed} disputed" if st.figures_disputed else "")},
+            {"type": "mrkdwn", "text": f"*Version*\nv{memo.version} · requested by {memo.requested_by}"},
+            {"type": "mrkdwn", "text": f"*Run*\n{seconds:.0f}s · ${cost_usd:.2f}"},
+        ]},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Key points*\n{bullets}"[:2900]}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*Sections*\n" + "\n".join(sections)}},
+        {"type": "section", "text": {"type": "mrkdwn", "text":
+            f"*:mag: Gaps and unverified*\n{gap_text or '• None reported.'}"[:2900]}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Sources*\n{sources or '—'}"[:2900]}},
         {"type": "context", "elements": [{"type": "mrkdwn", "text":
-            f"{len(memo.sections)} sections · {seconds:.0f}s · ${cost_usd:.2f} · v{memo.version} · "
-            "reply in this thread with e.g. `redo competitors` to refresh one section"}]},
+            ":speech_balloon: Reply in this thread to ask a question (e.g. _what's their ARR?_) "
+            "or refresh one section (e.g. `redo competitors`)."}]},
     ]

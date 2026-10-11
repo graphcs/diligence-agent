@@ -1,5 +1,6 @@
 """Slack flow offline: a fake Slack client records every call; Claude is the scripted fake."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -91,10 +92,13 @@ async def test_unknown_company_and_strict_identity(slack, cfg):
 async def test_full_run_posts_summary_with_review_button_and_file(slack):
     start("100.3")
     await slack_app.run_and_report(slack, "C1", "100.3")
-    assert any("✓ Company snapshot" in u["text"] for u in slack.named("update"))
-    summary = [p for p in slack.named("post") if p.get("blocks")][-1]
-    assert summary["blocks"][0]["text"]["text"] == "Brief: Northwind Robotics"
-    assert "Review status: 0/4 sections reviewed" in summary["blocks"][1]["elements"][0]["text"]
+    first = slack.named("post")[0]  # the progress card lists every planned section up front
+    assert first["blocks"][1]["text"]["text"].count(":white_circle:") == 4
+    assert any(":white_check_mark: Company snapshot" in str(u.get("blocks")) for u in slack.named("update"))
+    assert "done in" in slack.named("update")[-1]["text"]
+    summary = [p for p in slack.named("post") if p.get("text", "").startswith("Brief:")][-1]
+    assert summary["blocks"][0]["text"]["text"] == "📄 Pre-meeting brief · Northwind Robotics"
+    assert "AI draft, not yet reviewed · 0/4 sections reviewed" in summary["blocks"][1]["elements"][0]["text"]
     assert summary["blocks"][-1]["elements"][0]["action_id"] == "review_open"
     (upload,) = slack.named("upload")
     assert upload["filename"] == "Northwind_Robotics_brief_v1.md" and "## Sources" in upload["content"]
@@ -112,7 +116,7 @@ async def test_thread_state_survives_restart_and_reruns_one_section(slack):
 async def test_access_denied_is_reported_in_thread(slack):
     start("100.5", crm="crm-004", user="analyst_bob", slack_user=BOB_SLACK)
     await slack_app.run_and_report(slack, "C1", "100.5")
-    assert slack.named("update")[-1]["text"].startswith("Access denied")
+    assert slack.named("update")[-1]["text"].startswith(":lock: Access denied")
     assert not slack.named("upload")
 
 
@@ -122,7 +126,7 @@ async def test_wide_channel_gets_memo_by_dm_instead(slack):
     await slack_app.run_and_report(slack, "C1", "100.6")
     notice = [p for p in slack.named("post") if "Sent to" in p.get("text", "")]
     assert notice and notice[0]["channel"] == "C1"
-    summary = [p for p in slack.named("post") if p.get("blocks")][-1]
+    summary = [p for p in slack.named("post") if p.get("text", "").startswith("Brief:")][-1]
     assert summary["channel"] == "DALICE" and "thread_ts" not in summary
     assert slack.named("upload")[0]["channel"] == "DALICE"
 
@@ -153,6 +157,11 @@ async def test_review_and_sign_off_through_buttons(slack, cfg):
     memo = orchestrator.load_memo(cfg, "crm-003", "vp_alice")
     from diligence import review
     assert review.signed_off_by(memo)
+    card = slack_app.get_thread("100.8")["card"]
+    card_updates = [u for u in slack.named("update") if u["ts"] == card["ts"]]
+    assert "In review · 1/4 sections reviewed" in card_updates[0]["blocks"][1]["elements"][0]["text"]
+    assert "Signed off by vp_alice" in card_updates[-1]["blocks"][1]["elements"][0]["text"]
+    assert card_updates[-1]["blocks"][-1]["elements"][0]["text"]["text"] == "Open review"
     assert any("signed off" in p.get("text", "") for p in slack.named("post"))
     assert slack.named("upload")[-1]["filename"].endswith("_FINAL.md")
 
@@ -179,9 +188,12 @@ async def test_question_in_thread_gets_cited_answer(slack, monkeypatch):
     monkeypatch.setattr(slack_app.qa, "answer", fake_answer)
     await slack_app.handle_request(slack, {"channel": "C1", "ts": "101.1", "thread_ts": "101.0",
                                            "user": ALICE_SLACK, "text": "<@UBOT> what's the pick rate?"})
-    ans = slack.named("post")[-1]
+    holder = slack.named("post")[-1]  # a placeholder right away, then the answer in its place
+    assert "Looking that up" in holder["text"]
+    ans = slack.named("update")[-1]
+    assert ans["ts"] == f"200.{slack.calls.index(('post', holder)) + 1}"
     assert "600 units/hour [1]" in ans["blocks"][0]["text"]["text"]
-    assert "Series B pitch deck, p. 3" in ans["blocks"][0]["text"]["text"]
+    assert "Series B pitch deck, p. 3" in ans["blocks"][1]["elements"][0]["text"]
 
 
 async def test_question_without_company_gets_guidance(slack):
@@ -196,3 +208,20 @@ def test_disputed_figure_can_be_resolved_from_the_panel():
                   figures=[Figure(id="snapshot-1", section="snapshot", text="ARR $4.8M", status="disputed", by="vp_alice")])
     ids = [e["action_id"] for b in slack_app.review_blocks(m, "t") if b["type"] == "actions" for e in b["elements"]]
     assert ids == ["fig_ok__snapshot-1"]
+
+
+async def test_reopening_review_retires_the_old_panel(slack):
+    start("102.2")
+    await slack_app.run_and_report(slack, "C1", "102.2")
+    body = {"actions": [{"value": json.dumps({"thread": "102.2"})}], "channel": {"id": "C1"},
+            "message": {"ts": "x", "thread_ts": "102.2"}}
+    app = type("App", (), {})()
+    handlers = {}
+    app.event = lambda *a, **k: (lambda f: f)
+    app.action = lambda name: (lambda f: handlers.setdefault(str(name), f))
+    slack_app.register(app)
+    ack = lambda: asyncio.sleep(0)
+    await handlers["review_open"](ack, body, slack)
+    first = slack_app.get_thread("102.2")["panel"]
+    await handlers["review_open"](ack, body, slack)
+    assert any(u["ts"] == first["ts"] and "moved" in u["text"] for u in slack.named("update"))
