@@ -21,7 +21,8 @@ Using only the claims provided (each with evidence ids), write:
      first, as plain numbers in one unit (e.g. unit "$M"). Only cited figures.
    - business_model: who pays or supplies whom, as edges between short names (e.g. source
      "Mid-size 3PLs", target the company, label "per-robot subscription").
-   - funding: cited funding rounds with date, round name, amount and lead investor.
+   - funding: cited funding rounds with date, round name, amount and lead investor. Use ""
+     for any part the claims don't state (never "Not disclosed" or "Unknown").
 Do not invent ids."""
 
 def _obj(**props: dict) -> dict:
