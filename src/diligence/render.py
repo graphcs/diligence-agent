@@ -150,7 +150,7 @@ def to_markdown(ledger: Ledger, memo: MemoState) -> str:
             md.append(f"- {c.text} {cites.refs(c.evidence_ids)}{tag}")
         if key in diagrams:
             md += [""] + diagrams[key]
-        md += ["", f"<sub>Drafted {s.generated_at} · run {s.run_id}</sub>", ""]
+        md.append("")
     if memo.figures:
         md += ["## Figures to verify", "",
                "Every financial figure must be checked against its source by a person on the deal team "

@@ -134,8 +134,6 @@ def to_docx(ledger: Ledger, memo: MemoState, images: dict[str, bytes] | None = N
             cap = _small(doc, f"{c.caption} · sources {cites.refs(charts.evidence_ids(memo, key))}",
                          italic=True, color=INK_2, size=9)
             cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if s.generated_at or s.run_id:
-            _small(doc, f"Drafted {s.generated_at} · run {s.run_id}")
 
     if memo.figures:
         doc.add_heading("Figures to verify", level=1)
