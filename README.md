@@ -61,7 +61,7 @@ uv run diligence review "Northwind Robotics" --all-sections --verify snapshot-5
 uv run diligence records verify <run id>                      # check the run's hash chain
 ```
 
-Memos are written to `out/<crm id>/<user>/memo.md` (drafts are per user, so a teammate without data-room access never inherits your data-room findings). Each run is also saved as `memo_<run id>.md`.
+Memos are written to `out/<crm id>/<user>/memo.md` and `memo.docx` (drafts are per user, so a teammate without data-room access never inherits your data-room findings). Each run is also saved as `memo_<run id>.md`.
 
 ## Slack (sandbox workspace)
 
@@ -86,7 +86,7 @@ uv run python evals/run_evals.py injection
 
 1. **Ask:** in Slack, type `@diligence Help me conduct a diligence for Lattice`. The bot replies within about a second with two CRM matches. Pick **Lattice**, then **Pre-meeting brief**.
 2. **Progress:** a single message updates as each section finishes; the sections run in parallel.
-3. **Trust:** open the memo file. Every bullet has a [n] citation, and each source shows its type (Verified or Reported), its as-of date and the exact quote. Uncited statements are labeled *(unverified)*.
+3. **Trust:** open the memo file. Every bullet has a [n] citation, and each source shows its type (Verified or Reported), its as-of date and the exact quote. Uncited statements are labeled *(unverified)*. Funding, business model, competitive positioning and ARR are drawn as charts inside their sections. Slack gets the memo as a Word document with the charts embedded (`out/<crm id>/<user>/memo.docx`; the `.md` next to it links the same PNGs in `diagrams/`). *Gaps and unverified* is at the end, above Sources.
 4. **Truncation:** run Northwind with `--stage deep_dive`. Gaps shows "read 20/180 pages of the market study", or the agent reads on to page 180 and finds the customer-termination risk.
 5. **Permissions:** run Northwind as `analyst_bob`. Gaps says the data room is not accessible to him, and `diligence audit` shows the denials in red.
 6. **Information barrier:** Alice sits on Ferrous Dynamics' board. Northwind's competitor section still never uses Ferrous' board deck. Run the `segregation` eval to show this.

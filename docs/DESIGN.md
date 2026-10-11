@@ -141,7 +141,8 @@ A rerun merges into the same memo. The version number goes up, the changelog rec
   - **Inferred:** the agent's synthesis.
 - **Deduplication:** identical source, page and quote share one citation number across sections.
 - **Conflicts:** when sources disagree they are shown side by side, and the editor lists them under *Consistency checks* (e.g. the deck's $4.8M ARR vs "about $4.1M" in call notes).
-- **Missing inputs:** each section lists its gaps. The memo has a dedicated *Gaps and unverified* block, so absence is explicit.
+- **Missing inputs:** each section lists its gaps. The memo has a dedicated *Gaps and unverified* block at the end, just above Sources, so absence is explicit.
+- **Business diagrams:** the editor pass also extracts structured data, and `charts.py` draws it locally with matplotlib: a funding timeline (snapshot), a business model map centred on the company (product), a competitive quadrant (competitors, labelled as inferred) and an ARR trend (financials, deep dive only). Every item must cite known evidence ids, and anything uncited is dropped. A chart with too few points is not drawn. The memo posted to Slack is a Word document (`word.py`, python-docx) with the charts embedded in their sections. Markdown can't carry images inside the file; a .docx can, Slack previews it, and the deal team can edit and comment on it. It is re-rendered on every save so its banner and review status stay current. The `.md` is still written for the CLI and links the same PNGs from `diagrams/`. Rendering is local on purpose: a hosted renderer (mermaid.ink, Kroki) would send confidential deal data to a third party.
 
 ### Domain definitions
 
@@ -162,7 +163,7 @@ A CRM lookup (no LLM, under 1s) runs first. Ambiguous names get buttons; for exa
 - **Result:**
   - a summary card showing the status, key points, section status, gaps, sources with confidence, time and cost;
   - a **Review & sign off** button;
-  - the full memo attached as a file.
+  - the full memo attached as a Word document, with the charts embedded.
 - **The status always matches the review state:** *AI draft, not yet reviewed* → *In review · 2/4 sections · 3/6 figures* → *Signed off by X*.
   - The summary card is re-rendered in place after every review click, so an old "not reviewed" banner never stays on screen.
   - The review panel shows per-section **Mark reviewed** buttons and figures grouped by section. Reopening it moves the panel down rather than leaving two live copies.
