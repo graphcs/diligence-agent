@@ -156,13 +156,18 @@ A CRM lookup (no LLM, under 1s) runs first. Ambiguous names get buttons; for exa
 ## 6. UX and delivery
 
 - **The user stays in Slack** and never thinks about tokens or context windows.
-- **Instant acknowledgement:** a reply within about 1s, then a single progress message updated in place ("✓ Team and founders · … Competitive landscape (34s)").
+- **Instant acknowledgement:** a reply within about 1s, then a single progress card updated in place.
+  - It lists every planned section from the start (queued, working, done), the current step (research, editor pass, audience check, posting), a progress bar, and a timer that ticks every 5s.
+  - When the run ends, it collapses to one line ("✅ Brief done in 74s · $0.41 · summary below").
 - **Result:**
-  - a summary card with the review status, summary, gaps, sources, time and cost;
+  - a summary card showing the status, key points, section status, gaps, sources with confidence, time and cost;
   - a **Review & sign off** button;
   - the full memo attached as a file.
+- **The status always matches the review state:** *AI draft, not yet reviewed* → *In review · 2/4 sections · 3/6 figures* → *Signed off by X*.
+  - The summary card is re-rendered in place after every review click, so an old "not reviewed" banner never stays on screen.
+  - The review panel shows per-section **Mark reviewed** buttons and figures grouped by section. Reopening it moves the panel down rather than leaving two live copies.
 - **Every claim has a [n] citation.** The Sources list shows title, page, confidence, as-of date and the exact quote.
-- **Thread follow-ups:** reruns, and questions answered in about 2–4s from the brief. If the brief doesn't cover a question, the bot says so and offers a **Refresh <section>** button.
+- **Thread follow-ups:** reruns, and questions answered in about 2–4s from the brief. A "🔎 Looking that up…" placeholder appears at once and is replaced by the cited answer. If the brief doesn't cover a question, the bot says so and offers a **Refresh <section>** button.
 - **No link previews on bot messages,** and domains are shown as code. A link preview makes Slack fetch a URL on the bot's behalf and display third-party content.
 
 ---
